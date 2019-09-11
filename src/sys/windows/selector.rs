@@ -177,7 +177,7 @@ impl Binding {
     /// this crate. More information about this can be found on the
     /// `windows` module in this crate.
     pub unsafe fn register_handle(&self,
-                                  handle: &AsRawHandle,
+                                  handle: &dyn AsRawHandle,
                                   token: Token,
                                   poll: &Poll) -> io::Result<()> {
         let selector = poll::selector(poll);
@@ -191,7 +191,7 @@ impl Binding {
 
     /// Same as `register_handle` but for sockets.
     pub unsafe fn register_socket(&self,
-                                  handle: &AsRawSocket,
+                                  handle: &dyn AsRawSocket,
                                   token: Token,
                                   poll: &Poll) -> io::Result<()> {
         let selector = poll::selector(poll);
@@ -218,7 +218,7 @@ impl Binding {
     /// This function is unsafe for similar reasons to `register`. That is,
     /// there may be pending I/O events and such which aren't handled correctly.
     pub unsafe fn reregister_handle(&self,
-                                    _handle: &AsRawHandle,
+                                    _handle: &dyn AsRawHandle,
                                     _token: Token,
                                     poll: &Poll) -> io::Result<()> {
         self.check_same_selector(poll)
@@ -226,7 +226,7 @@ impl Binding {
 
     /// Same as `reregister_handle`, but for sockets.
     pub unsafe fn reregister_socket(&self,
-                                    _socket: &AsRawSocket,
+                                    _socket: &dyn AsRawSocket,
                                     _token: Token,
                                     poll: &Poll) -> io::Result<()> {
         self.check_same_selector(poll)
@@ -246,14 +246,14 @@ impl Binding {
     /// This function is unsafe for similar reasons to `register`. That is,
     /// there may be pending I/O events and such which aren't handled correctly.
     pub unsafe fn deregister_handle(&self,
-                                    _handle: &AsRawHandle,
+                                    _handle: &dyn AsRawHandle,
                                     poll: &Poll) -> io::Result<()> {
         self.check_same_selector(poll)
     }
 
     /// Same as `deregister_handle`, but for sockets.
     pub unsafe fn deregister_socket(&self,
-                                    _socket: &AsRawSocket,
+                                    _socket: &dyn AsRawSocket,
                                     poll: &Poll) -> io::Result<()> {
         self.check_same_selector(poll)
     }
@@ -349,7 +349,7 @@ impl ReadyBinding {
     /// and otherwise just reassociates ourselves with the event loop to
     /// possible change tokens.
     pub fn register_socket(&mut self,
-                           socket: &AsRawSocket,
+                           socket: &dyn AsRawSocket,
                            poll: &Poll,
                            token: Token,
                            events: Ready,
@@ -369,7 +369,7 @@ impl ReadyBinding {
 
     /// Implementation of `Evented::reregister` function.
     pub fn reregister_socket(&mut self,
-                             socket: &AsRawSocket,
+                             socket: &dyn AsRawSocket,
                              poll: &Poll,
                              token: Token,
                              events: Ready,
@@ -391,7 +391,7 @@ impl ReadyBinding {
     /// Doesn't allow registration with another event loop, just shuts down
     /// readiness notifications and such.
     pub fn deregister(&mut self,
-                      socket: &AsRawSocket,
+                      socket: &dyn AsRawSocket,
                       poll: &Poll,
                       registration: &Mutex<Option<poll::Registration>>)
                       -> io::Result<()> {
