@@ -643,3 +643,18 @@ impl FromRawFd for UdpSocket {
     }
 }
 
+/*
+ *
+ * ===== Windows ext =====
+ *
+ */
+
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, RawSocket};
+
+#[cfg(windows)]
+impl AsRawSocket for UdpSocket {
+    fn as_raw_socket(&self) -> RawSocket {
+        self.sys.as_raw_socket()
+    }
+}

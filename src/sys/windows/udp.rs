@@ -8,6 +8,7 @@ use std::io::prelude::*;
 use std::io;
 use std::mem;
 use std::net::{self, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::os::windows::prelude::*;
 use std::sync::{Mutex, MutexGuard};
 
 #[allow(unused_imports)]
@@ -380,6 +381,12 @@ impl Drop for UdpSocket {
                 State::Error(_) => {}
             }
         }
+    }
+}
+
+impl AsRawSocket for UdpSocket {
+    fn as_raw_socket(&self) -> RawSocket {
+        self.imp.inner.socket.as_raw_socket()
     }
 }
 
