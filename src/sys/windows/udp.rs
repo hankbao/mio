@@ -107,14 +107,36 @@ impl UdpSocket {
 
         let mut owned_buf = me.iocp.get_buffer(64 * 1024);
         let amt = owned_buf.write(buf)?;
-        unsafe {
+        let ret = unsafe {
             trace!("scheduling a send");
             self.imp.inner.socket.send_to_overlapped(&owned_buf, target,
                                                      self.imp.inner.write.as_mut_ptr())
-        }?;
-        me.write = State::Pending(owned_buf);
-        mem::forget(self.imp.clone());
-        Ok(amt)
+        };
+        match ret {
+            Ok(Some(transferred_bytes)) => {
+                trace!("done immediately with {} bytes", transferred_bytes);
+                if transferred_bytes != buf.len() {
+                    trace!("ERROR: transferred bytes mismatch with bytes in buf");
+                    debug_assert!(false);
+                }
+                me.write = State::Empty;
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
+                Ok(transferred_bytes)
+            }
+            Ok(_) => {
+                trace!("schedule for later");
+                me.write = State::Pending(owned_buf);
+                mem::forget(self.imp.clone());
+                Ok(amt)
+            }
+            Err(e) => {
+                trace!("write error: {}", e);
+                me.write = State::Error(io::Error::new(e.kind(), e.to_string()));
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
+                me.iocp.put_buffer(owned_buf);
+                Err(e)
+            }
+        }
     }
 
     /// Note that unlike `TcpStream::write` this function will not attempt to
@@ -141,14 +163,35 @@ impl UdpSocket {
 
         let mut owned_buf = me.iocp.get_buffer(64 * 1024);
         let amt = owned_buf.write(buf)?;
-        unsafe {
+        let ret = unsafe {
             trace!("scheduling a send");
             self.imp.inner.socket.send_overlapped(&owned_buf, self.imp.inner.write.as_mut_ptr())
-
-        }?;
-        me.write = State::Pending(owned_buf);
-        mem::forget(self.imp.clone());
-        Ok(amt)
+        };
+        match ret {
+            Ok(Some(transferred_bytes)) => {
+                trace!("done immediately with {} bytes", transferred_bytes);
+                if transferred_bytes != buf.len() {
+                    trace!("ERROR: transferred bytes mismatch with bytes in buf");
+                    debug_assert!(false);
+                }
+                me.write = State::Empty;
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
+                Ok(transferred_bytes)
+            }
+            Ok(_) => {
+                trace!("schedule for later");
+                me.write = State::Pending(owned_buf);
+                mem::forget(self.imp.clone());
+                Ok(amt)
+            }
+            Err(e) => {
+                trace!("write error: {}", e);
+                me.write = State::Error(io::Error::new(e.kind(), e.to_string()));
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
+                me.iocp.put_buffer(owned_buf);
+                Err(e)
+            }
+        }
     }
 
     pub fn recv_from(&self, mut buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
