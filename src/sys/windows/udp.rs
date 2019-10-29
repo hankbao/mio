@@ -93,50 +93,23 @@ impl UdpSocket {
         let mut me = self.inner();
         let me = &mut *me;
 
-        match me.write {
+        match mem::replace(&mut me.write, State::Empty) {
             State::Empty => {}
-            _ => return Err(io::ErrorKind::WouldBlock.into()),
+            State::Error(e) => return Err(e),
+            other => {
+                me.write = other;
+                return Err(io::ErrorKind::WouldBlock.into())
+            }
         }
 
         if !me.iocp.registered() {
             return Err(io::ErrorKind::WouldBlock.into())
         }
 
-        let interest = me.iocp.readiness();
-        me.iocp.set_readiness(interest - Ready::writable());
-
-        let mut owned_buf = me.iocp.get_buffer(64 * 1024);
+        let mut owned_buf = me.iocp.get_buffer(buf.len());
         let amt = owned_buf.write(buf)?;
-        let ret = unsafe {
-            trace!("scheduling a send");
-            self.imp.inner.socket.send_to_overlapped(&owned_buf, target,
-                                                     self.imp.inner.write.as_mut_ptr())
-        };
-        match ret {
-            Ok(Some(transferred_bytes)) => {
-                trace!("done immediately with {} bytes", transferred_bytes);
-                if transferred_bytes != buf.len() {
-                    trace!("ERROR: transferred bytes mismatch with bytes in buf");
-                    debug_assert!(false);
-                }
-                me.write = State::Empty;
-                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
-                Ok(transferred_bytes)
-            }
-            Ok(_) => {
-                trace!("schedule for later");
-                me.write = State::Pending(owned_buf);
-                mem::forget(self.imp.clone());
-                Ok(amt)
-            }
-            Err(e) => {
-                trace!("write error: {}", e);
-                me.write = State::Error(io::Error::new(e.kind(), e.to_string()));
-                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
-                me.iocp.put_buffer(owned_buf);
-                Err(e)
-            }
-        }
+        self.imp.schedule_send_to(owned_buf, target, me);
+        Ok(amt)
     }
 
     /// Note that unlike `TcpStream::write` this function will not attempt to
@@ -149,49 +122,23 @@ impl UdpSocket {
         let mut me = self.inner();
         let me = &mut *me;
 
-        match me.write {
+        match mem::replace(&mut me.write, State::Empty) {
             State::Empty => {}
-            _ => return Err(io::ErrorKind::WouldBlock.into()),
+            State::Error(e) => return Err(e),
+            other => {
+                me.write = other;
+                return Err(io::ErrorKind::WouldBlock.into())
+            }
         }
 
         if !me.iocp.registered() {
             return Err(io::ErrorKind::WouldBlock.into())
         }
 
-        let interest = me.iocp.readiness();
-        me.iocp.set_readiness(interest - Ready::writable());
-
-        let mut owned_buf = me.iocp.get_buffer(64 * 1024);
+        let mut owned_buf = me.iocp.get_buffer(buf.len());
         let amt = owned_buf.write(buf)?;
-        let ret = unsafe {
-            trace!("scheduling a send");
-            self.imp.inner.socket.send_overlapped(&owned_buf, self.imp.inner.write.as_mut_ptr())
-        };
-        match ret {
-            Ok(Some(transferred_bytes)) => {
-                trace!("done immediately with {} bytes", transferred_bytes);
-                if transferred_bytes != buf.len() {
-                    trace!("ERROR: transferred bytes mismatch with bytes in buf");
-                    debug_assert!(false);
-                }
-                me.write = State::Empty;
-                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
-                Ok(transferred_bytes)
-            }
-            Ok(_) => {
-                trace!("schedule for later");
-                me.write = State::Pending(owned_buf);
-                mem::forget(self.imp.clone());
-                Ok(amt)
-            }
-            Err(e) => {
-                trace!("write error: {}", e);
-                me.write = State::Error(io::Error::new(e.kind(), e.to_string()));
-                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
-                me.iocp.put_buffer(owned_buf);
-                Err(e)
-            }
-        }
+        self.imp.schedule_send(owned_buf, me);
+        Ok(amt)
     }
 
     pub fn recv_from(&self, mut buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
@@ -207,8 +154,7 @@ impl UdpSocket {
                     Err(io::Error::from_raw_os_error(WSAEMSGSIZE as i32))
                 } else {
                     let r = if let Some(addr) = me.read_buf.to_socket_addr() {
-                        buf.write(&data).unwrap();
-                        Ok((data.len(), addr))
+                        Ok((buf.write(&data).unwrap(), addr))
                     } else {
                         Err(io::Error::new(io::ErrorKind::Other,
                                            "failed to parse socket address"))
@@ -361,6 +307,56 @@ impl Imp {
             Err(e) => {
                 me.read = State::Error(e);
                 self.add_readiness(me, Ready::readable());
+                me.iocp.put_buffer(buf);
+            }
+        }
+    }
+
+    fn schedule_send_to(&self,
+                        buf: Vec<u8>,
+                        target: &SocketAddr,
+                        me: &mut Inner) {
+
+        // About to write, clear any pending level triggered events
+        me.iocp.set_readiness(me.iocp.readiness() - Ready::writable());
+
+        let ret = unsafe {
+            trace!("scheduling a send");
+            self.inner.socket.send_to_overlapped(&buf, target, self.inner.write.as_mut_ptr())
+        };
+        match ret {
+            Ok(_) => {
+                trace!("schedule for later");
+                me.write = State::Pending(buf);
+                mem::forget(self.clone());
+            }
+            Err(e) => {
+                trace!("write error: {}", e);
+                me.write = State::Error(e);
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
+                me.iocp.put_buffer(buf);
+            }
+        }
+    }
+
+    fn schedule_send(&self, buf: Vec<u8>, me: &mut Inner) {
+        // About to write, clear any pending level triggered events
+        me.iocp.set_readiness(me.iocp.readiness() - Ready::writable());
+
+        let ret = unsafe {
+            trace!("scheduling a send");
+            self.inner.socket.send_overlapped(&buf, self.inner.write.as_mut_ptr())
+        };
+        match ret {
+            Ok(_) => {
+                trace!("schedule for later");
+                me.write = State::Pending(buf);
+                mem::forget(self.clone());
+            }
+            Err(e) => {
+                trace!("write error: {}", e);
+                me.write = State::Error(e);
+                me.iocp.set_readiness(Ready::writable() | me.iocp.readiness());
                 me.iocp.put_buffer(buf);
             }
         }
