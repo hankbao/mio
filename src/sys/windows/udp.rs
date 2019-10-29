@@ -106,7 +106,7 @@ impl UdpSocket {
             return Err(io::ErrorKind::WouldBlock.into())
         }
 
-        let mut owned_buf = me.iocp.get_buffer(buf.len());
+        let mut owned_buf = me.iocp.get_buffer(64 * 1024);
         let amt = owned_buf.write(buf)?;
         self.imp.schedule_send_to(owned_buf, target, me);
         Ok(amt)
@@ -135,7 +135,7 @@ impl UdpSocket {
             return Err(io::ErrorKind::WouldBlock.into())
         }
 
-        let mut owned_buf = me.iocp.get_buffer(buf.len());
+        let mut owned_buf = me.iocp.get_buffer(64 * 1024);
         let amt = owned_buf.write(buf)?;
         self.imp.schedule_send(owned_buf, me);
         Ok(amt)
