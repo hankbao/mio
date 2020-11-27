@@ -29,7 +29,7 @@ default = ["with-deprecated"]
 [dependencies]
 log      = "0.4"
 slab     = "0.4.0"
-net2     = "0.2.29"
+net2     = "0.2.36"
 iovec    = "0.1.1"
 cfg-if   = "0.1.9"
 
@@ -42,7 +42,7 @@ libc   = "0.2.42"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.2.6"
-miow   = "0.2.1"
+miow   = "0.2.2"
 kernel32-sys = "0.2"
 
 [dev-dependencies]
