@@ -75,6 +75,9 @@ struct StreamInner {
     /// (FILE_SKIP_COMPLETION_PORT_ON_SUCCESS,
     ///  without a roundtrip through the event loop)
     instant_notify: bool,
+    /// set once the owning `TcpStream` has been dropped; completion callbacks
+    /// must not issue any further I/O after this point
+    closing: bool,
 }
 
 struct ListenerInner {
@@ -107,6 +110,7 @@ impl TcpStream {
                         read: State::Empty,
                         write: State::Empty,
                         instant_notify: false,
+                        closing: false,
                     }),
                 }),
             },
@@ -548,6 +552,12 @@ fn read_done(status: &OVERLAPPED_ENTRY) {
     match unsafe { me2.inner.socket.result(status.overlapped()) }
         .and_then(|_| me2.inner.socket.connect_complete())
     {
+        // The owner is gone (see `Drop for TcpStream`) and the connect won the
+        // race against `CancelIoEx`: don't start the read that would normally
+        // follow, it would hold a reference nobody is left to cancel.
+        Ok(()) if me.closing => {
+            trace!("owner dropped, not scheduling a read");
+        }
         Ok(()) => {
             me2.add_readiness(&mut me, Ready::writable());
             me2.schedule_read(&mut me);
@@ -570,6 +580,25 @@ fn write_done(status: &OVERLAPPED_ENTRY) {
         State::Pending(pair) => pair,
         _ => unreachable!(),
     };
+    // The owner is gone (see `Drop for TcpStream`). Whether this is the
+    // cancelled completion or a send that won the race against `CancelIoEx`,
+    // never issue further I/O: just return the buffer and, by dropping `me2`
+    // below, the reference taken in `schedule_write`, so that the socket can
+    // actually be closed.
+    if me.closing {
+        trace!("owner dropped, not rescheduling the write");
+        me.iocp.put_buffer(buf);
+        return
+    }
+    // A write that failed asynchronously completes with an error and nothing
+    // transferred. Don't re-issue it, stash the error for the next `write`.
+    if let Err(e) = unsafe { me2.inner.socket.result(status.overlapped()) } {
+        trace!("write failed: {}", e);
+        me.write = State::Error(e);
+        me.iocp.put_buffer(buf);
+        me2.add_readiness(&mut me, Ready::writable());
+        return
+    }
     let new_pos = pos + (status.bytes_transferred() as usize);
     if new_pos == buf.len() {
         me2.add_readiness(&mut me, Ready::writable());
@@ -625,20 +654,41 @@ impl fmt::Debug for TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        // If we're still internally reading, we're no longer interested. Note
-        // though that we don't cancel any writes which may have been issued to
-        // preserve the same semantics as Unix.
+        let mut me = self.inner();
+
+        // Tell the completion callbacks that nobody owns this stream anymore,
+        // so that a completion which wins the race against the cancellations
+        // below doesn't schedule further I/O (`read_done`, `write_done`).
+        me.closing = true;
+
+        // If we're still internally reading, we're no longer interested.
         //
         // Note that "Empty" here may mean that a connect is pending, so we
         // cancel even if that happens as well.
+        //
+        // A pending write is cancelled too. The in-flight operation holds a
+        // `mem::forget`-ed clone of `imp` (see `schedule_write`) which is only
+        // returned by `write_done`, so without cancelling it the socket would
+        // stay open until the peer drains the send -- and leak forever if the
+        // completion port goes away before that. This differs from Unix, where
+        // `close(2)` still delivers everything `write(2)` accepted: whatever
+        // part of the pending `WSASend` the kernel has not consumed yet is
+        // discarded, so the peer may observe a truncated stream. Callers that
+        // need the data delivered must wait for the writable event (i.e. the
+        // completion of the write) before dropping the stream.
         unsafe {
-            match self.inner().read {
+            match me.read {
                 State::Pending(_) | State::Empty => {
                     trace!("cancelling active TCP read");
                     drop(super::cancel(&self.imp.inner.socket,
                                        &self.imp.inner.read));
                 }
                 State::Ready(_) | State::Error(_) => {}
+            }
+            if let State::Pending(_) = me.write {
+                trace!("cancelling active TCP write");
+                drop(super::cancel(&self.imp.inner.socket,
+                                   &self.imp.inner.write));
             }
         }
     }

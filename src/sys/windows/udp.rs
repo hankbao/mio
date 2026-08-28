@@ -406,9 +406,15 @@ impl Drop for UdpSocket {
     fn drop(&mut self) {
         let inner = self.inner();
 
-        // If we're still internally reading, we're no longer interested. Note
-        // though that we don't cancel any writes which may have been issued to
-        // preserve the same semantics as Unix.
+        // If we're still internally reading, we're no longer interested.
+        //
+        // A pending send is cancelled as well: it holds a `mem::forget`-ed
+        // clone of `imp` (see `schedule_send`/`schedule_send_to`) which is only
+        // returned by `send_done`, so without cancelling it the socket would
+        // stay open until the send completes -- and leak forever if the
+        // completion port goes away before that. Unlike Unix, where `close(2)`
+        // still delivers a datagram `send(2)` accepted, a datagram still owned
+        // by the pending `WSASend`/`WSASendTo` at this point is discarded.
         unsafe {
             match inner.read {
                 State::Pending(_) => {
@@ -418,6 +424,11 @@ impl Drop for UdpSocket {
                 State::Empty |
                 State::Ready(_) |
                 State::Error(_) => {}
+            }
+            if let State::Pending(_) = inner.write {
+                trace!("cancelling active UDP send");
+                drop(super::cancel(&self.imp.inner.socket,
+                                   &self.imp.inner.write));
             }
         }
     }
