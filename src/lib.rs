@@ -6,7 +6,7 @@
 
 // Many of mio's public methods violate this lint, but they can't be fixed
 // without a breaking change.
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::trivially_copy_pass_by_ref))]
+#![cfg_attr(clippy, allow(clippy::trivially_copy_pass_by_ref))]
 
 //! A fast, low-level IO library for Rust focusing on non-blocking APIs, event
 //! notification, and other useful utilities for building high performance IO

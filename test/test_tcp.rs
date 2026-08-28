@@ -510,7 +510,7 @@ fn connection_reset_by_peer() {
     let client = net2::TcpBuilder::new_v4().unwrap()
         .to_tcp_stream().unwrap();
 
-    client.set_linger(Some(Duration::from_millis(0))).unwrap();
+    net2::TcpStreamExt::set_linger(&client, Some(Duration::from_millis(0))).unwrap();
     client.connect(&addr).unwrap();
 
     // Convert to Mio stream

@@ -168,11 +168,11 @@ impl TcpStream {
     }
 
     pub fn set_keepalive(&self, keepalive: Option<Duration>) -> io::Result<()> {
-        self.imp.inner.socket.set_keepalive(keepalive)
+        Net2TcpExt::set_keepalive(&self.imp.inner.socket, keepalive)
     }
 
     pub fn keepalive(&self) -> io::Result<Option<Duration>> {
-        self.imp.inner.socket.keepalive()
+        Net2TcpExt::keepalive(&self.imp.inner.socket)
     }
 
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
@@ -192,11 +192,11 @@ impl TcpStream {
     }
 
     pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.imp.inner.socket.set_linger(dur)
+        Net2TcpExt::set_linger(&self.imp.inner.socket, dur)
     }
 
     pub fn linger(&self) -> io::Result<Option<Duration>> {
-        self.imp.inner.socket.linger()
+        Net2TcpExt::linger(&self.imp.inner.socket)
     }
 
     pub fn take_error(&self) -> io::Result<Option<io::Error>> {
@@ -230,11 +230,11 @@ impl TcpStream {
         }
     }
 
-    fn inner(&self) -> MutexGuard<StreamInner> {
+    fn inner(&self) -> MutexGuard<'_, StreamInner> {
         self.imp.inner()
     }
 
-    fn before_read(&self) -> io::Result<MutexGuard<StreamInner>> {
+    fn before_read(&self) -> io::Result<MutexGuard<'_, StreamInner>> {
         let mut me = self.inner();
 
         match me.read {
@@ -394,7 +394,7 @@ impl TcpStream {
 }
 
 impl StreamImp {
-    fn inner(&self) -> MutexGuard<StreamInner> {
+    fn inner(&self) -> MutexGuard<'_, StreamInner> {
         self.inner.inner.lock().unwrap()
     }
 
@@ -773,13 +773,13 @@ impl TcpListener {
         self.imp.inner.socket.take_error()
     }
 
-    fn inner(&self) -> MutexGuard<ListenerInner> {
+    fn inner(&self) -> MutexGuard<'_, ListenerInner> {
         self.imp.inner()
     }
 }
 
 impl ListenerImp {
-    fn inner(&self) -> MutexGuard<ListenerInner> {
+    fn inner(&self) -> MutexGuard<'_, ListenerInner> {
         self.inner.inner.lock().unwrap()
     }
 

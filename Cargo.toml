@@ -7,6 +7,7 @@ name          = "mio"
 # - Update doc URL.
 # - Create git tag
 version       = "0.6.21"
+edition       = "2015"
 license       = "MIT"
 authors       = ["Carl Lerche <me@carllerche.com>"]
 description   = "Lightweight non-blocking IO"

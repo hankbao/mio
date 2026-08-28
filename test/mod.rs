@@ -155,22 +155,20 @@ impl<T> MapNonBlock<T> for io::Result<T> {
 mod ports {
     use std::net::SocketAddr;
     use std::str::FromStr;
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering::SeqCst;
 
     // Helper for getting a unique port for the task run
     // TODO: Reuse ports to not spam the system
-    static mut NEXT_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
+    static NEXT_PORT: AtomicUsize = AtomicUsize::new(0);
     const FIRST_PORT: usize = 18080;
 
     fn next_port() -> usize {
-        unsafe {
-            // If the atomic was never used, set it to the initial port
-            NEXT_PORT.compare_and_swap(0, FIRST_PORT, SeqCst);
+        // If the atomic was never used, set it to the initial port
+        let _ = NEXT_PORT.compare_exchange(0, FIRST_PORT, SeqCst, SeqCst);
 
-            // Get and increment the port list
-            NEXT_PORT.fetch_add(1, SeqCst)
-        }
+        // Get and increment the port list
+        NEXT_PORT.fetch_add(1, SeqCst)
     }
 
     pub fn localhost() -> SocketAddr {
