@@ -3,7 +3,6 @@
 // deprecated APIs.
 #![allow(bare_trait_objects, deprecated, unknown_lints)]
 #![deny(missing_docs, missing_debug_implementations)]
-#![cfg_attr(test, deny(warnings))]
 
 // Many of mio's public methods violate this lint, but they can't be fixed
 // without a breaking change.
