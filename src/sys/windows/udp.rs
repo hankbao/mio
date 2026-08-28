@@ -447,7 +447,18 @@ fn send_done(status: &OVERLAPPED_ENTRY) {
         inner: unsafe { overlapped2arc!(status.overlapped(), Io, write) },
     };
     let mut me = me2.inner();
-    me.write = State::Empty;
+    if let State::Pending(buf) = mem::replace(&mut me.write, State::Empty) {
+        me.iocp.put_buffer(buf);
+    }
+    // A send that failed asynchronously (e.g. an ICMP "port unreachable" on a
+    // connected socket) or that was cancelled (see `Drop`) must not be
+    // reported as a plain writable event: stash the error so that the next
+    // `send`/`send_to` returns it, like `schedule_send*` does for synchronous
+    // failures.
+    if let Err(e) = unsafe { me2.inner.socket.result(status.overlapped()) } {
+        trace!("send failed: {}", e);
+        me.write = State::Error(e);
+    }
     me2.add_readiness(&mut me, Ready::writable());
 }
 
