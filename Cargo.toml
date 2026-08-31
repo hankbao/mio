@@ -42,7 +42,7 @@ libc   = "0.2.42"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.2.6"
-miow   = "0.2.2"
+miow   = { version = "0.2.2", git = "https://github.com/hankbao/miow", branch = "0.2.x" }
 kernel32-sys = "0.2"
 
 [dev-dependencies]
