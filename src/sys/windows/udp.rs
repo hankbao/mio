@@ -257,7 +257,7 @@ impl UdpSocket {
         self.imp.inner.socket.take_error()
     }
 
-    fn inner(&self) -> MutexGuard<Inner> {
+    fn inner(&self) -> MutexGuard<'_, Inner> {
         self.imp.inner()
     }
 
@@ -278,7 +278,7 @@ impl UdpSocket {
 }
 
 impl Imp {
-    fn inner(&self) -> MutexGuard<Inner> {
+    fn inner(&self) -> MutexGuard<'_, Inner> {
         self.inner.inner.lock().unwrap()
     }
 
@@ -406,9 +406,15 @@ impl Drop for UdpSocket {
     fn drop(&mut self) {
         let inner = self.inner();
 
-        // If we're still internally reading, we're no longer interested. Note
-        // though that we don't cancel any writes which may have been issued to
-        // preserve the same semantics as Unix.
+        // If we're still internally reading, we're no longer interested.
+        //
+        // A pending send is cancelled as well: it holds a `mem::forget`-ed
+        // clone of `imp` (see `schedule_send`/`schedule_send_to`) which is only
+        // returned by `send_done`, so without cancelling it the socket would
+        // stay open until the send completes -- and leak forever if the
+        // completion port goes away before that. Unlike Unix, where `close(2)`
+        // still delivers a datagram `send(2)` accepted, a datagram still owned
+        // by the pending `WSASend`/`WSASendTo` at this point is discarded.
         unsafe {
             match inner.read {
                 State::Pending(_) => {
@@ -418,6 +424,11 @@ impl Drop for UdpSocket {
                 State::Empty |
                 State::Ready(_) |
                 State::Error(_) => {}
+            }
+            if let State::Pending(_) = inner.write {
+                trace!("cancelling active UDP send");
+                drop(super::cancel(&self.imp.inner.socket,
+                                   &self.imp.inner.write));
             }
         }
     }
@@ -436,7 +447,18 @@ fn send_done(status: &OVERLAPPED_ENTRY) {
         inner: unsafe { overlapped2arc!(status.overlapped(), Io, write) },
     };
     let mut me = me2.inner();
-    me.write = State::Empty;
+    if let State::Pending(buf) = mem::replace(&mut me.write, State::Empty) {
+        me.iocp.put_buffer(buf);
+    }
+    // A send that failed asynchronously (e.g. an ICMP "port unreachable" on a
+    // connected socket) or that was cancelled (see `Drop`) must not be
+    // reported as a plain writable event: stash the error so that the next
+    // `send`/`send_to` returns it, like `schedule_send*` does for synchronous
+    // failures.
+    if let Err(e) = unsafe { me2.inner.socket.result(status.overlapped()) } {
+        trace!("send failed: {}", e);
+        me.write = State::Error(e);
+    }
     me2.add_readiness(&mut me, Ready::writable());
 }
 

@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use std::str;
 use std::time;
 use localhost;
+#[cfg(all(unix, not(target_os = "fuchsia")))]
 use iovec::IoVec;
 
 const LISTENER: Token = Token(0);

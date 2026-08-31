@@ -20,7 +20,6 @@
 //!   null, so Option<FromRawArc<T>> is not a nullable pointer.
 
 use std::ops::Deref;
-use std::mem;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 
 pub struct FromRawArc<T> {
@@ -42,7 +41,7 @@ impl<T> FromRawArc<T> {
             data: data,
             cnt: AtomicUsize::new(1),
         });
-        FromRawArc { _inner: unsafe { mem::transmute(x) } }
+        FromRawArc { _inner: Box::into_raw(x) }
     }
 
     pub unsafe fn from_raw(ptr: *mut T) -> FromRawArc<T> {
@@ -81,7 +80,7 @@ impl<T> Drop for FromRawArc<T> {
                 return
             }
             atomic::fence(Ordering::Acquire);
-            drop(mem::transmute::<_, Box<T>>(self._inner));
+            drop(Box::from_raw(self._inner));
         }
     }
 }

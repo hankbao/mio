@@ -75,6 +75,7 @@ macro_rules! assert_ready {
     }}
 }
 
+#[cfg(unix)]
 macro_rules! assert_not_ready {
     ($poll:expr, $token:expr, $ready:expr) => {{
         match $poll.wait_for($token, $ready) {
@@ -200,7 +201,7 @@ fn test_graceful_shutdown() {
     drop(socket);
 
     assert_ready!(poll, Token(0), Ready::readable());
-    #[cfg(not(any(target_os = "bitrig", target_os = "dragonfly",
+    #[cfg(not(any(target_os = "dragonfly",
         target_os = "freebsd", target_os = "ios", target_os = "macos",
         target_os = "netbsd", target_os = "openbsd")))]
     assert_hup_ready!(poll);
@@ -228,7 +229,7 @@ fn test_abrupt_shutdown() {
                   PollOpt::edge());
 
     let (socket, _) = assert_ok!(listener.accept());
-    assert_ok!(socket.set_linger(Some(Duration::from_millis(0))));
+    assert_ok!(TcpStreamExt::set_linger(&socket, Some(Duration::from_millis(0))));
     // assert_ok!(socket.set_linger(None));
 
     // Wait to be connected
@@ -236,7 +237,7 @@ fn test_abrupt_shutdown() {
 
     drop(socket);
 
-    #[cfg(not(any(target_os = "bitrig", target_os = "dragonfly",
+    #[cfg(not(any(target_os = "dragonfly",
         target_os = "freebsd", target_os = "ios", target_os = "macos",
         target_os = "netbsd", target_os = "openbsd")))]
     assert_hup_ready!(poll);

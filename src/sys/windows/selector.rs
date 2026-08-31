@@ -461,16 +461,10 @@ impl Events {
 
 macro_rules! overlapped2arc {
     ($e:expr, $t:ty, $($field:ident).+) => ({
-        let offset = offset_of!($t, $($field).+);
+        let offset = mem::offset_of!($t, $($field).+);
         debug_assert!(offset < mem::size_of::<$t>());
         FromRawArc::from_raw(($e as usize - offset) as *mut $t)
     })
-}
-
-macro_rules! offset_of {
-    ($t:ty, $($field:ident).+) => (
-        &(*(0 as *const $t)).$($field).+ as *const _ as usize
-    )
 }
 
 // See sys::windows module docs for why this exists.
