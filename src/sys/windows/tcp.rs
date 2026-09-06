@@ -418,12 +418,14 @@ impl StreamImp {
         self.inner.inner.lock().unwrap()
     }
 
-    fn schedule_connect(&self, addr: &SocketAddr) -> io::Result<()> {
+    fn schedule_connect(&self, addr: &SocketAddr, me: &mut StreamInner)
+                        -> io::Result<()> {
         unsafe {
             trace!("scheduling a connect");
             self.inner.socket.connect_overlapped(addr, &[], self.inner.read.as_mut_ptr())?;
         }
         // see docs above on StreamImp.inner for rationale on forget
+        me.iocp.io_op_issued();
         mem::forget(self.clone());
         Ok(())
     }
@@ -477,6 +479,7 @@ impl StreamImp {
             Ok(_) => {
                 // see docs above on StreamImp.inner for rationale on forget
                 me.read = State::Pending(());
+                me.iocp.io_op_issued();
                 mem::forget(self.clone());
             }
             Err(e) => {
@@ -522,6 +525,7 @@ impl StreamImp {
                     trace!("scheduled for later");
                     // see docs above on StreamImp.inner for rationale on forget
                     me.write = State::Pending((buf, pos));
+                    me.iocp.io_op_issued();
                     mem::forget(self.clone());
                     break;
                 }
@@ -553,6 +557,10 @@ fn read_done(status: &OVERLAPPED_ENTRY) {
     };
 
     let mut me = me2.inner();
+    // `me2` is the reference `schedule_read`/`schedule_connect` loaned to the
+    // completion port; it is returned when `me2` is dropped at the end of
+    // this function, so account for that first, on every path.
+    me.iocp.io_op_completed();
     match mem::replace(&mut me.read, State::Empty) {
         State::Pending(()) => {
             trace!("finished a read: {}", status.bytes_transferred());
@@ -596,6 +604,8 @@ fn write_done(status: &OVERLAPPED_ENTRY) {
         inner: unsafe { overlapped2arc!(status.overlapped(), StreamIo, write) },
     };
     let mut me = me2.inner();
+    // See `read_done`: `me2` is the reference loaned by `schedule_write`.
+    me.iocp.io_op_completed();
     let (buf, pos) = match mem::replace(&mut me.write, State::Empty) {
         State::Pending(pair) => pair,
         _ => unreachable!(),
@@ -644,7 +654,7 @@ impl Evented for TcpStream {
         // successful connect will worry about generating writable/readable
         // events and scheduling a new read.
         if let Some(addr) = me.deferred_connect.take() {
-            return self.imp.schedule_connect(&addr).map(|_| ())
+            return self.imp.schedule_connect(&addr, &mut me).map(|_| ())
         }
         self.post_register(interest, &mut me);
         Ok(())
@@ -824,6 +834,7 @@ impl ListenerImp {
             Ok((socket, _)) => {
                 // see docs above on StreamImp.inner for rationale on forget
                 me.accept = State::Pending(socket);
+                me.iocp.io_op_issued();
                 mem::forget(self.clone());
             }
             Err(e) => {
@@ -846,6 +857,8 @@ fn accept_done(status: &OVERLAPPED_ENTRY) {
     };
 
     let mut me = me2.inner();
+    // See `read_done`: `me2` is the reference loaned by `schedule_accept`.
+    me.iocp.io_op_completed();
     let socket = match mem::replace(&mut me.accept, State::Empty) {
         State::Pending(s) => s,
         _ => unreachable!(),

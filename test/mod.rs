@@ -14,6 +14,9 @@ extern crate tempdir;
 #[cfg(target_os = "fuchsia")]
 extern crate fuchsia_zircon as zircon;
 
+#[cfg(windows)]
+extern crate kernel32;
+
 pub use ports::localhost;
 
 mod test_custom_evented;
@@ -37,6 +40,8 @@ mod test_write_then_drop;
 
 #[cfg(windows)]
 mod test_tcp_flush;
+#[cfg(windows)]
+mod test_pending_io_ops;
 
 #[cfg(feature = "with-deprecated")]
 mod test_notify;

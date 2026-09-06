@@ -302,6 +302,7 @@ impl Imp {
         match res {
             Ok(_) => {
                 me.read = State::Pending(buf);
+                me.iocp.io_op_issued();
                 mem::forget(self.clone());
             }
             Err(e) => {
@@ -328,6 +329,7 @@ impl Imp {
             Ok(_) => {
                 trace!("schedule for later");
                 me.write = State::Pending(buf);
+                me.iocp.io_op_issued();
                 mem::forget(self.clone());
             }
             Err(e) => {
@@ -351,6 +353,7 @@ impl Imp {
             Ok(_) => {
                 trace!("schedule for later");
                 me.write = State::Pending(buf);
+                me.iocp.io_op_issued();
                 mem::forget(self.clone());
             }
             Err(e) => {
@@ -447,6 +450,10 @@ fn send_done(status: &OVERLAPPED_ENTRY) {
         inner: unsafe { overlapped2arc!(status.overlapped(), Io, write) },
     };
     let mut me = me2.inner();
+    // `me2` is the reference `schedule_send`/`schedule_send_to` loaned to the
+    // completion port, returned when it is dropped at the end of this
+    // function: account for that first, on every path.
+    me.iocp.io_op_completed();
     if let State::Pending(buf) = mem::replace(&mut me.write, State::Empty) {
         me.iocp.put_buffer(buf);
     }
@@ -469,6 +476,8 @@ fn recv_done(status: &OVERLAPPED_ENTRY) {
         inner: unsafe { overlapped2arc!(status.overlapped(), Io, read) },
     };
     let mut me = me2.inner();
+    // See `send_done`: `me2` is the reference loaned by `schedule_read_from`.
+    me.iocp.io_op_completed();
     let mut buf = match mem::replace(&mut me.read, State::Empty) {
         State::Pending(buf) => buf,
         _ => unreachable!(),

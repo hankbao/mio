@@ -48,6 +48,15 @@ struct SelectorInner {
     /// Primitives will take buffers from this pool to perform I/O operations,
     /// and once complete they'll be put back in.
     buffers: Mutex<BufferPool>,
+
+    /// Number of overlapped operations issued by this crate's own I/O
+    /// primitives on `port` whose completion has not been dispatched by
+    /// `select` yet (see `Poll::pending_io_ops`).
+    ///
+    /// Each such operation loans a `mem::forget`-ed reference to the I/O
+    /// object to the completion port, returned only by the completion
+    /// callback; this counter tracks exactly those loans.
+    pending_ops: AtomicUsize,
 }
 
 impl Selector {
@@ -61,6 +70,7 @@ impl Selector {
                     id: id,
                     port: cp,
                     buffers: Mutex::new(BufferPool::new(256)),
+                    pending_ops: AtomicUsize::new(0),
                 }),
             }
         })
@@ -119,11 +129,27 @@ impl Selector {
     pub fn id(&self) -> usize {
         self.inner.id
     }
+
+    /// Number of overlapped operations issued by this crate's I/O primitives
+    /// whose completion `select` has not dispatched yet.
+    pub fn pending_io_ops(&self) -> usize {
+        self.inner.pending_ops.load(Ordering::SeqCst)
+    }
 }
 
 impl SelectorInner {
     fn identical(&self, other: &SelectorInner) -> bool {
         (self as *const SelectorInner) == (other as *const SelectorInner)
+    }
+
+    fn io_op_issued(&self) {
+        self.pending_ops.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn io_op_completed(&self) {
+        let prev = self.pending_ops.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(prev > 0, "more overlapped completions dispatched than \
+                                 operations issued");
     }
 }
 
@@ -318,6 +344,34 @@ impl ReadyBinding {
     pub fn put_buffer(&self, buf: Vec<u8>) {
         if let Some(i) = self.binding.selector.borrow() {
             i.buffers.lock().unwrap().put(buf);
+        }
+    }
+
+    /// Records that an overlapped operation has just been issued on the I/O
+    /// object owning this binding (see `Poll::pending_io_ops`).
+    ///
+    /// Must be called under the same lock as the `mem::forget` of the
+    /// reference loaned to the completion port, so that a reader of the
+    /// counter never observes an operation whose reference is not accounted
+    /// for. Operations are only ever issued once the object is registered,
+    /// which is what makes the selector reachable from here.
+    pub fn io_op_issued(&self) {
+        let selector = self.binding.selector.borrow();
+        debug_assert!(selector.is_some(),
+                      "overlapped operation issued before registration");
+        if let Some(i) = selector {
+            i.io_op_issued();
+        }
+    }
+
+    /// Records that the completion of an operation counted by `io_op_issued`
+    /// is being dispatched.
+    ///
+    /// Must be called by the completion callback before it drops the loaned
+    /// reference, on every path through it.
+    pub fn io_op_completed(&self) {
+        if let Some(i) = self.binding.selector.borrow() {
+            i.io_op_completed();
         }
     }
 

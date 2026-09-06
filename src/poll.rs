@@ -1228,6 +1228,32 @@ impl AsRawFd for Poll {
     }
 }
 
+#[cfg(windows)]
+impl Poll {
+    /// Returns the number of overlapped I/O operations issued through this
+    /// poll's completion port whose completion has not yet been dequeued and
+    /// dispatched by `Poll::poll`.
+    ///
+    /// On Windows every read, write, connect and accept that mio's own
+    /// `TcpStream`, `TcpListener` and `UdpSocket` perform is an overlapped
+    /// operation. Such an operation stays in flight, keeping the underlying
+    /// socket alive, until a call to `poll` has processed its completion
+    /// packet -- even after the I/O object has been dropped, since dropping
+    /// it cancels the operation and the cancellation is itself reported as a
+    /// completion. An event loop that is shutting down can therefore keep
+    /// calling `poll` exactly as long as this returns a non-zero value: once
+    /// it reads zero no socket is held open by an in-flight operation any
+    /// more.
+    ///
+    /// Only operations issued by mio's own I/O types are counted. Operations
+    /// that external users of `mio::windows::Overlapped` and
+    /// `mio::windows::Binding` issue on handles registered with this poll
+    /// (`mio-named-pipes`, for instance) are not.
+    pub fn pending_io_ops(&self) -> usize {
+        self.selector.pending_io_ops()
+    }
+}
+
 /// A collection of readiness events.
 ///
 /// `Events` is passed as an argument to [`Poll::poll`] and will be used to
