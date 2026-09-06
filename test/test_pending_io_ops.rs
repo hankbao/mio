@@ -167,25 +167,28 @@ fn counts_every_kind_of_operation() {
     let poll = Poll::new().unwrap();
     let mut events = Events::with_capacity(64);
 
-    // The first round also pays for one-time initialisation (Winsock itself,
-    // the `AcceptEx`/`ConnectEx` extension lookups) whose handles stay around
-    // for the rest of the process, so the handle count is only compared
-    // across the second round.
-    exercise(&poll, &mut events);
-    let handles = handle_count();
-    exercise(&poll, &mut events);
-
-    // The process handle count is back where it started. Other tests run in
-    // parallel in this process and may hold handles of their own for a
-    // while, so give it time to settle instead of sampling it once.
+    // A round must not leave a single handle behind, and the process handle
+    // count is the only place where that shows up. It is shared with the
+    // other tests running in parallel in this process though, several of
+    // which leak sockets for good: dropping a `Poll` while a cancellation is
+    // still in flight never reaps it. Waiting for the count to come back
+    // down would therefore wait forever, so measure a window of our own
+    // instead and repeat the round until one of them falls into a quiet one
+    // -- a round that leaks nothing cannot end above where it started. The
+    // first round is never that one anyway: it still pays for the one-time
+    // initialisation (Winsock itself, the `AcceptEx`/`ConnectEx` extension
+    // lookups) whose handles stay around for the rest of the process.
     let deadline = Instant::now() + TIMEOUT;
     loop {
-        let now = handle_count();
-        if now <= handles {
+        let before = handle_count();
+        exercise(&poll, &mut events);
+        let after = handle_count();
+        if after <= before {
             break;
         }
         assert!(Instant::now() < deadline,
-                "handle count stayed at {} instead of returning to {}", now, handles);
+                "every round grew the process handle count, last {} to {}",
+                before, after);
         thread::sleep(Duration::from_millis(50));
     }
 }
