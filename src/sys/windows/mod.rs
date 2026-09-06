@@ -72,9 +72,11 @@
 //! Write operations are a little different from reads, and the current
 //! implementation is to just schedule a write as soon as `write` is first
 //! called. While that write operation is in progress all future calls to
-//! `write` will return `WouldBlock`. Completion of the write then translates to
-//! a `writable` event. Note that this will probably want to add some layer of
-//! internal buffering in the future.
+//! `write` will return `WouldBlock`, and so does `flush` (the bytes `write`
+//! accepted are still owned by the in-flight `WSASend`, which dropping the
+//! stream cancels). Completion of the write then translates to a `writable`
+//! event, after which `flush` returns `Ok`. Note that this will probably want
+//! to add some layer of internal buffering in the future.
 //!
 //! ## Buffer Management
 //!

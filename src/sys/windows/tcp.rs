@@ -388,8 +388,28 @@ impl TcpStream {
         Ok(len)
     }
 
+    /// Reports whether the bytes accepted by `write`/`writev` have been
+    /// handed over to the kernel yet.
+    ///
+    /// `write` copies the caller's bytes into an intermediate buffer and
+    /// returns `Ok(len)` as soon as the `WSASend` has been *issued*; until its
+    /// completion has been dispatched by `Poll::poll` that buffer is still
+    /// owned by the kernel and `Drop` would cancel the send, discarding
+    /// whatever the kernel hasn't consumed. So while the send is in flight
+    /// this returns `WouldBlock`; `write_done` adds writable readiness as soon
+    /// as the buffer has been written completely (or the send failed), which
+    /// is the event callers wait for before retrying.
     pub fn flush(&self) -> io::Result<()> {
-        Ok(())
+        let mut me = self.inner();
+        match me.write {
+            State::Pending(_) => Err(io::ErrorKind::WouldBlock.into()),
+            // Hand out a stored asynchronous failure once, like `writev` does.
+            State::Error(_) => match mem::replace(&mut me.write, State::Empty) {
+                State::Error(e) => Err(e),
+                _ => unreachable!(),
+            },
+            State::Empty | State::Ready(_) => Ok(()),
+        }
     }
 }
 
@@ -674,8 +694,9 @@ impl Drop for TcpStream {
         // `close(2)` still delivers everything `write(2)` accepted: whatever
         // part of the pending `WSASend` the kernel has not consumed yet is
         // discarded, so the peer may observe a truncated stream. Callers that
-        // need the data delivered must wait for the writable event (i.e. the
-        // completion of the write) before dropping the stream.
+        // need the data delivered must call `flush` until it stops returning
+        // `WouldBlock` (waiting for the writable event, i.e. the completion of
+        // the write, in between) before dropping the stream.
         unsafe {
             match me.read {
                 State::Pending(_) | State::Empty => {

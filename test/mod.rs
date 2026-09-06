@@ -35,6 +35,9 @@ mod test_udp_level;
 mod test_udp_socket;
 mod test_write_then_drop;
 
+#[cfg(windows)]
+mod test_tcp_flush;
+
 #[cfg(feature = "with-deprecated")]
 mod test_notify;
 #[cfg(feature = "with-deprecated")]
